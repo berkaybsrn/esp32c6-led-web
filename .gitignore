@@ -1,0 +1,9 @@
+build/
+build.pre-matter-attempt1/
+managed_components/
+
+sdkconfig.old
+sdkconfig.pre-matter
+
+*.pyc
+.DS_Store
