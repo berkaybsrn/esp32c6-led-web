@@ -92,6 +92,12 @@ typedef struct {
 } effect_params_t;
 
 typedef struct {
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+} effect_color_t;
+
+typedef struct {
     uint16_t count;
     uint8_t red;
     uint8_t green;
@@ -100,6 +106,7 @@ typedef struct {
     bool power;
     uint8_t effect;
     effect_params_t effect_profiles[LED_EFFECT_COUNT];
+    effect_color_t effect_colors[LED_EFFECT_COUNT];
 } led_state_t;
 
 static const effect_spec_t kEffectSpecs[LED_EFFECT_COUNT] = {
@@ -273,6 +280,12 @@ input[type=file]{width:100%;padding:12px 14px;background:#091223;border:1px dash
 <input id="controlColor" type="color" value="#ff6020">
 </div>
 </div>
+<div class="row">
+<div id="effectColorRow" style="display:none">
+<div class="label"><span id="effectColorLabel">Effect Color</span><span class="value" id="effectColorValue">#FFFFFF</span></div>
+<input id="effectColor" type="color" value="#ffffff">
+</div>
+</div>
 <div class="effect-tabs">
 <button class="tab-btn active" data-effect-tab="solid">Solid</button>
 <button class="tab-btn" data-effect-tab="glow">Glow</button>
@@ -308,7 +321,7 @@ input[type=file]{width:100%;padding:12px 14px;background:#091223;border:1px dash
 <button class="btn btn-secondary" id="reloadBtn">Reload Device State</button>
 </div>
 <div class="status" id="controlStatus"></div>
-<div class="footer">Saving from this page updates brightness, color, and effect without forcing a power-state change.</div>
+<div class="footer">Applying control turns the strip on when brightness is above zero. Set brightness to zero to keep it dark.</div>
 </div>
 </section>
 </div>
@@ -323,6 +336,10 @@ const configApPassword = document.getElementById('configApPassword');
 const controlBrightness = document.getElementById('controlBrightness');
 const controlColor = document.getElementById('controlColor');
 const controlColorValue = document.getElementById('controlColorValue');
+const effectColorRow = document.getElementById('effectColorRow');
+const effectColor = document.getElementById('effectColor');
+const effectColorLabel = document.getElementById('effectColorLabel');
+const effectColorValue = document.getElementById('effectColorValue');
 const controlStatus = document.getElementById('controlStatus');
 const configStatus = document.getElementById('configStatus');
 const actionStatus = document.getElementById('actionStatus');
@@ -350,24 +367,36 @@ const revertBtn = document.getElementById('revertBtn');
 const factoryResetBtn = document.getElementById('factoryResetBtn');
 const effectTabButtons = Array.from(document.querySelectorAll('[data-effect-tab]'));
 const effectParamRows = [0,1,2,3,4].map((index)=>({row:document.getElementById('effectParamRow'+index),label:document.getElementById('effectParamLabel'+index),value:document.getElementById('effectParamValue'+index),input:document.getElementById('effectParamInput'+index)}));
-const EFFECT_META = {solid:{params:[]},glow:{params:[{label:'Pulse Speed',min:1,max:255,defaultValue:140},{label:'Glow Floor',min:0,max:255,defaultValue:72},{label:'Pulse Depth',min:0,max:255,defaultValue:180}]},rainbow:{params:[{label:'Drift Speed',min:1,max:255,defaultValue:120},{label:'Rainbow Length',min:1,max:255,defaultValue:96},{label:'Color Blend',min:0,max:255,defaultValue:220},{label:'Start Offset',min:0,max:255,defaultValue:0},{label:'Contrast',min:0,max:255,defaultValue:96}]},chase:{params:[{label:'Chase Speed',min:1,max:255,defaultValue:175},{label:'Tail Length',min:1,max:255,defaultValue:90},{label:'Tail Sharpness',min:0,max:255,defaultValue:170}]},sparkle:{params:[{label:'Spark Density',min:1,max:255,defaultValue:180},{label:'Base Glow',min:0,max:255,defaultValue:60},{label:'Twinkle Speed',min:1,max:255,defaultValue:170}]},wave:{params:[{label:'Wave Speed',min:1,max:255,defaultValue:110},{label:'Wavelength',min:1,max:255,defaultValue:110},{label:'Wave Depth',min:0,max:255,defaultValue:190}]}};
+const EFFECT_META = {
+solid:{params:[],colors:[]},
+glow:{params:[{label:'Pulse Speed',min:1,max:255,defaultValue:140},{label:'Glow Floor',min:0,max:255,defaultValue:72},{label:'Pulse Depth',min:0,max:255,defaultValue:180}],colors:[]},
+rainbow:{params:[{label:'Drift Speed',min:1,max:255,defaultValue:120},{label:'Rainbow Length',min:1,max:255,defaultValue:96},{label:'Color Blend',min:0,max:255,defaultValue:220},{label:'Start Offset',min:0,max:255,defaultValue:0},{label:'Contrast',min:0,max:255,defaultValue:96}],colors:[]},
+chase:{params:[{label:'Chase Speed',min:1,max:255,defaultValue:175},{label:'Tail Length',min:1,max:255,defaultValue:90},{label:'Tail Sharpness',min:0,max:255,defaultValue:170}],colors:[]},
+sparkle:{params:[{label:'Spark Density',min:1,max:255,defaultValue:180},{label:'Base Glow',min:0,max:255,defaultValue:60},{label:'Twinkle Speed',min:1,max:255,defaultValue:170}],colors:[{label:'Sparkle Color',defaultValue:'#FFFFFF'}]},
+wave:{params:[{label:'Wave Speed',min:1,max:255,defaultValue:110},{label:'Wavelength',min:1,max:255,defaultValue:110},{label:'Wave Depth',min:0,max:255,defaultValue:190}],colors:[]}
+};
 let effectProfiles = {};
+let effectColors = {};
 let selectedEffect = 'solid';
 function switchMainTab(name){mainTabButtons.forEach((button)=>button.classList.toggle('active',button.dataset.mainTab===name));Object.entries(panels).forEach(([panelName,panel])=>panel.classList.toggle('active',panelName===name))}
 function buildDefaultEffectProfiles(){const profiles={};for(const [name,meta] of Object.entries(EFFECT_META)){profiles[name]=[0,0,0,0,0];meta.params.forEach((param,index)=>{profiles[name][index]=param.defaultValue})}return profiles}
+function buildDefaultEffectColors(){const colors={};for(const [name,meta] of Object.entries(EFFECT_META)){colors[name]=(meta.colors&&meta.colors[0]?meta.colors[0].defaultValue:'#FFFFFF').toUpperCase()}return colors}
 function normalizeEffectProfiles(rawProfiles){const profiles=buildDefaultEffectProfiles();for(const [name,values] of Object.entries(rawProfiles||{})){if(!profiles[name]||!Array.isArray(values))continue;values.forEach((value,index)=>{const meta=EFFECT_META[name].params[index];if(!meta)return;const parsed=Number(value);if(Number.isFinite(parsed)){profiles[name][index]=Math.max(meta.min,Math.min(meta.max,parsed))}})}return profiles}
+function normalizeHexColor(value,fallback){return typeof value==='string'&&/^#[0-9a-fA-F]{6}$/.test(value)?value.toUpperCase():fallback}
+function normalizeEffectColors(rawColors){const colors=buildDefaultEffectColors();for(const [name,value] of Object.entries(rawColors||{})){if(!(name in colors))continue;colors[name]=normalizeHexColor(value,colors[name])}return colors}
 function syncConfigCount(v){configCount.value=v;configCountNumber.value=v;configCountValue.textContent=v}
 function getSelectedEffectValues(){if(!effectProfiles[selectedEffect]){effectProfiles[selectedEffect]=buildDefaultEffectProfiles()[selectedEffect]||[0,0,0,0,0]}return effectProfiles[selectedEffect]}
+function getSelectedEffectColor(){if(!(selectedEffect in effectColors)){effectColors[selectedEffect]=buildDefaultEffectColors()[selectedEffect]||'#FFFFFF'}return effectColors[selectedEffect]}
 function renderEffectButtons(){effectTabButtons.forEach((button)=>button.classList.toggle('active',button.dataset.effectTab===selectedEffect))}
-function syncEffectControls(){const meta=EFFECT_META[selectedEffect]||EFFECT_META.solid;const values=getSelectedEffectValues();effectParamRows.forEach((slot,index)=>{const spec=meta.params[index];if(!spec){slot.row.style.display='none';return}slot.row.style.display='block';slot.label.textContent=spec.label;slot.input.min=spec.min;slot.input.max=spec.max;slot.input.value=values[index];slot.value.textContent=values[index]});renderEffectButtons()}
-function stashEffectControls(){const meta=EFFECT_META[selectedEffect]||EFFECT_META.solid;const values=getSelectedEffectValues();effectParamRows.forEach((slot,index)=>{if(!meta.params[index]){values[index]=0;return}values[index]=Number(slot.input.value);slot.value.textContent=slot.input.value})}
-function updateControlReadout(){brightnessValue.textContent=controlBrightness.value;controlColorValue.textContent=controlColor.value.toUpperCase()}
+function syncEffectControls(){const meta=EFFECT_META[selectedEffect]||EFFECT_META.solid;const values=getSelectedEffectValues();effectParamRows.forEach((slot,index)=>{const spec=meta.params[index];if(!spec){slot.row.style.display='none';return}slot.row.style.display='block';slot.label.textContent=spec.label;slot.input.min=spec.min;slot.input.max=spec.max;slot.input.value=values[index];slot.value.textContent=values[index]});const colorSpec=(meta.colors||[])[0];if(!colorSpec){effectColorRow.style.display='none'}else{effectColorRow.style.display='block';effectColorLabel.textContent=colorSpec.label;effectColor.value=getSelectedEffectColor().toLowerCase();effectColorValue.textContent=getSelectedEffectColor().toUpperCase()}renderEffectButtons()}
+function stashEffectControls(){const meta=EFFECT_META[selectedEffect]||EFFECT_META.solid;const values=getSelectedEffectValues();effectParamRows.forEach((slot,index)=>{if(!meta.params[index]){values[index]=0;return}values[index]=Number(slot.input.value);slot.value.textContent=slot.input.value});if((meta.colors||[])[0]){effectColors[selectedEffect]=normalizeHexColor(effectColor.value,getSelectedEffectColor())}}
+function updateControlReadout(){brightnessValue.textContent=controlBrightness.value;controlColorValue.textContent=controlColor.value.toUpperCase();if(effectColorRow.style.display!=='none'){effectColorValue.textContent=effectColor.value.toUpperCase()}}
 function setLink(linkEl,url,emptyLabel){if(url){linkEl.href=url;linkEl.textContent=url}else{linkEl.href='#';linkEl.textContent=emptyLabel||'Unavailable'}}
 function refreshOverview(data){overviewMatterStatus.textContent=data.commissioned?'Commissioned':'Ready to pair';overviewMatterEndpoint.textContent=data.matter_endpoint;overviewManualCode.textContent=data.manual_code||'Unavailable';setLink(overviewQrLink,data.qr_url,'Unavailable');overviewApSsid.textContent=data.ap_ssid||'-';setLink(overviewApUrl,data.ap_url||(data.ap_ip?('http://'+data.ap_ip):''),'Unavailable');overviewStaStatus.textContent=data.sta_connected?'Connected':'Not connected';setLink(overviewLanUrl,data.lan_url||(data.sta_ip?('http://'+data.sta_ip):''),'Not connected');overviewApRestart.textContent=data.ap_restart_required?'Yes, reset to apply new AP config':'No';overviewFwVersion.textContent=data.fw_version||'unknown';overviewRunningPartition.textContent=data.running_partition||'-';overviewNextPartition.textContent=data.ota_target_partition||'-';overviewRevertTarget.textContent=data.revert_available?((data.revert_version||'unknown')+' @ '+(data.revert_partition||'')):'No previous firmware available'}
 function setOtaBusy(busy){otaBtn.disabled=busy;otaFile.disabled=busy;otaBtn.textContent=busy?'Uploading OTA...':'Install OTA Update'}
-function applyStateToUi(data){effectProfiles=normalizeEffectProfiles(data.effect_profiles);selectedEffect=data.effect||'solid';syncConfigCount(data.count);configCount.max=data.max_leds;configCountNumber.max=data.max_leds;configApSsid.value=data.config_ap_ssid||data.ap_ssid||'';configApPassword.value=data.config_ap_password||'';controlBrightness.value=data.brightness;controlColor.value=data.color;revertBtn.disabled=!data.revert_available;refreshOverview(data);otaStatus.textContent='Next OTA slot: '+(data.ota_target_partition||'unknown')+'. Upload build/esp32c6_led_web.bin after the first USB flash.';syncEffectControls();updateControlReadout()}
+function applyStateToUi(data){effectProfiles=normalizeEffectProfiles(data.effect_profiles);effectColors=normalizeEffectColors(data.effect_colors);selectedEffect=data.effect||'solid';syncConfigCount(data.count);configCount.max=data.max_leds;configCountNumber.max=data.max_leds;configApSsid.value=data.config_ap_ssid||data.ap_ssid||'';configApPassword.value=data.config_ap_password||'';controlBrightness.value=data.brightness;controlColor.value=data.color;revertBtn.disabled=!data.revert_available;refreshOverview(data);otaStatus.textContent='Next OTA slot: '+(data.ota_target_partition||'unknown')+'. Upload build/esp32c6_led_web.bin after the first USB flash.';syncEffectControls();updateControlReadout()}
 async function loadState(){controlStatus.textContent='Loading device state...';const res=await fetch('/api/state');if(!res.ok)throw new Error('Failed to load state');const data=await res.json();applyStateToUi(data);controlStatus.textContent='Device state loaded';configStatus.textContent=data.ap_restart_required?'Saved AP config is waiting for a reset.':'Configuration loaded'}
-async function saveControl(){controlStatus.textContent='Applying control...';stashEffectControls();const payload={brightness:Number(controlBrightness.value),color:controlColor.value,effect:selectedEffect,effect_params:getSelectedEffectValues()};const res=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)throw new Error(await res.text()||'Failed to apply control');const data=await res.json();applyStateToUi(data);controlStatus.textContent='Control saved'}
+async function saveControl(){controlStatus.textContent='Applying control...';stashEffectControls();const brightness=Number(controlBrightness.value);const payload={brightness:brightness,color:controlColor.value,effect:selectedEffect,effect_params:getSelectedEffectValues(),power:brightness>0};if((EFFECT_META[selectedEffect].colors||[])[0]){payload.effect_color=getSelectedEffectColor()}const res=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)throw new Error(await res.text()||'Failed to apply control');const data=await res.json();applyStateToUi(data);controlStatus.textContent='Control saved'}
 async function saveConfig(){configStatus.textContent='Saving configuration...';const payload={count:Number(configCount.value),ap_ssid:configApSsid.value.trim(),ap_password:configApPassword.value};const res=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)throw new Error(await res.text()||'Failed to save configuration');const data=await res.json();applyStateToUi(data);configStatus.textContent=data.ap_restart_required?'Configuration saved. Press Reset to apply the new AP credentials.':'Configuration saved'}
 async function uploadOta(){const file=otaFile.files&&otaFile.files[0];if(!file)throw new Error('Choose a firmware .bin file first');setOtaBusy(true);otaStatus.textContent='Uploading '+file.name+' ('+file.size+' bytes)...';const res=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Filename':file.name},body:file});const text=await res.text();let data={message:text};try{data=JSON.parse(text)}catch(_){ }if(!res.ok)throw new Error(data.message||text||'OTA update failed');otaStatus.textContent=data.message||'Update installed. Device will restart.';actionStatus.textContent='OTA accepted. Reconnect after reboot.';setTimeout(()=>window.location.reload(),12000)}
 async function postAction(url,statusEl,confirmText){if(confirmText&&!window.confirm(confirmText))return;statusEl.textContent='Sending command...';const res=await fetch(url,{method:'POST'});const text=await res.text();let data={message:text};try{data=JSON.parse(text)}catch(_){ }if(!res.ok)throw new Error(data.message||text||'Action failed');statusEl.textContent=data.message||'Command sent';setTimeout(()=>window.location.reload(),12000)}
@@ -377,6 +406,7 @@ configCountNumber.addEventListener('input',()=>{const max=Number(configCount.max
 controlBrightness.addEventListener('input',updateControlReadout);controlColor.addEventListener('input',updateControlReadout);
 effectTabButtons.forEach((button)=>button.addEventListener('click',()=>{stashEffectControls();selectedEffect=button.dataset.effectTab;syncEffectControls();updateControlReadout()}));
 effectParamRows.forEach((slot)=>slot.input.addEventListener('input',()=>{stashEffectControls();updateControlReadout()}));
+effectColor.addEventListener('input',()=>{effectColors[selectedEffect]=normalizeHexColor(effectColor.value,getSelectedEffectColor());updateControlReadout()});
 saveControlBtn.addEventListener('click',()=>saveControl().catch(err=>controlStatus.textContent=err.message));
 saveConfigBtn.addEventListener('click',()=>saveConfig().catch(err=>configStatus.textContent=err.message));
 document.getElementById('reloadBtn').addEventListener('click',()=>loadState().catch(err=>controlStatus.textContent=err.message));
@@ -384,7 +414,7 @@ otaBtn.addEventListener('click',()=>uploadOta().catch(err=>{otaStatus.textConten
 rebootBtn.addEventListener('click',()=>postAction('/api/reboot',configStatus,'Reset the device now?').catch(err=>configStatus.textContent=err.message));
 revertBtn.addEventListener('click',()=>postAction('/api/revert',actionStatus,'Revert to the previous firmware slot and reboot?').catch(err=>actionStatus.textContent=err.message));
 factoryResetBtn.addEventListener('click',()=>postAction('/api/factory-reset',actionStatus,'Factory reset will erase Matter pairing, Wi-Fi AP config, and saved LED settings. Continue?').catch(err=>actionStatus.textContent=err.message));
-effectProfiles=buildDefaultEffectProfiles();syncEffectControls();loadState().catch(err=>{controlStatus.textContent=err.message;configStatus.textContent=err.message;updateControlReadout()});
+effectProfiles=buildDefaultEffectProfiles();effectColors=buildDefaultEffectColors();syncEffectControls();loadState().catch(err=>{controlStatus.textContent=err.message;configStatus.textContent=err.message;updateControlReadout()});
 </script>
 </body>
 </html>
@@ -490,6 +520,23 @@ static void reset_effect_profiles_to_defaults(led_state_t *state)
             state->effect_profiles[effect].values[index] = index < spec.param_count ? spec.params[index].default_value : 0;
         }
     }
+}
+
+static void reset_effect_colors_to_defaults(led_state_t *state)
+{
+    if (!state) {
+        return;
+    }
+
+    for (uint8_t effect = 0; effect < LED_EFFECT_COUNT; ++effect) {
+        state->effect_colors[effect].red = APP_LED_DEFAULT_RED;
+        state->effect_colors[effect].green = APP_LED_DEFAULT_GREEN;
+        state->effect_colors[effect].blue = APP_LED_DEFAULT_BLUE;
+    }
+
+    state->effect_colors[LED_EFFECT_SPARKLE].red = 255;
+    state->effect_colors[LED_EFFECT_SPARKLE].green = 255;
+    state->effect_colors[LED_EFFECT_SPARKLE].blue = 255;
 }
 
 static void clamp_effect_profile(uint8_t effect, effect_params_t *profile)
@@ -848,9 +895,9 @@ static void render_effect_pixel(const led_state_t *state, uint16_t index, uint32
         uint32_t random = pseudo_random_u32(index * 2654435761U + phase * 2246822519U);
         uint32_t sparkle_mask = std::max<uint32_t>(1, 127U - static_cast<uint32_t>(std::lround(density * 118.0)));
         if ((random & sparkle_mask) == 0) {
-            red = 255.0;
-            green = 255.0;
-            blue = 255.0;
+            red = static_cast<double>(state->effect_colors[LED_EFFECT_SPARKLE].red);
+            green = static_cast<double>(state->effect_colors[LED_EFFECT_SPARKLE].green);
+            blue = static_cast<double>(state->effect_colors[LED_EFFECT_SPARKLE].blue);
             brightness_scale *= 1.0;
         } else {
             brightness_scale *= base;
@@ -914,6 +961,15 @@ static esp_err_t save_state_to_nvs(const led_state_t *state)
             ESP_GOTO_ON_ERROR(nvs_set_u8(nvs_handle, key, state->effect_profiles[effect].values[index]),
                               cleanup, TAG, "save effect profile failed");
         }
+        std::snprintf(key, sizeof(key), "e%u_cr", effect);
+        ESP_GOTO_ON_ERROR(nvs_set_u8(nvs_handle, key, state->effect_colors[effect].red), cleanup, TAG,
+                          "save effect color red failed");
+        std::snprintf(key, sizeof(key), "e%u_cg", effect);
+        ESP_GOTO_ON_ERROR(nvs_set_u8(nvs_handle, key, state->effect_colors[effect].green), cleanup, TAG,
+                          "save effect color green failed");
+        std::snprintf(key, sizeof(key), "e%u_cb", effect);
+        ESP_GOTO_ON_ERROR(nvs_set_u8(nvs_handle, key, state->effect_colors[effect].blue), cleanup, TAG,
+                          "save effect color blue failed");
     }
     ESP_GOTO_ON_ERROR(nvs_commit(nvs_handle), cleanup, TAG, "nvs_commit failed");
 
@@ -956,6 +1012,12 @@ static void load_state_from_nvs()
             std::snprintf(key, sizeof(key), "e%u_p%u", loaded_effect, static_cast<unsigned>(index));
             nvs_get_u8(nvs_handle, key, &s_led_state.effect_profiles[loaded_effect].values[index]);
         }
+        std::snprintf(key, sizeof(key), "e%u_cr", loaded_effect);
+        nvs_get_u8(nvs_handle, key, &s_led_state.effect_colors[loaded_effect].red);
+        std::snprintf(key, sizeof(key), "e%u_cg", loaded_effect);
+        nvs_get_u8(nvs_handle, key, &s_led_state.effect_colors[loaded_effect].green);
+        std::snprintf(key, sizeof(key), "e%u_cb", loaded_effect);
+        nvs_get_u8(nvs_handle, key, &s_led_state.effect_colors[loaded_effect].blue);
     }
     nvs_close(nvs_handle);
 
@@ -993,6 +1055,15 @@ static bool parse_hex_color(const char *color, uint8_t *red, uint8_t *green, uin
     *green = static_cast<uint8_t>(parsed_green);
     *blue = static_cast<uint8_t>(parsed_blue);
     return true;
+}
+
+static void format_hex_color(uint8_t red, uint8_t green, uint8_t blue, char *buffer, size_t buffer_len)
+{
+    if (!buffer || buffer_len == 0) {
+        return;
+    }
+
+    std::snprintf(buffer, buffer_len, "#%02X%02X%02X", red, green, blue);
 }
 
 static void update_ip_string_from_netif(const char *if_key, char *output, size_t output_len)
@@ -1133,7 +1204,6 @@ static void sync_matter_state_work_handler(intptr_t arg)
     rgb_to_matter_hs(snapshot.red, snapshot.green, snapshot.blue, &hue, &saturation);
 
     esp_err_t err = ESP_OK;
-    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
     s_syncing_matter = true;
 
     esp_matter_attr_val_t on_off_value = esp_matter_bool(snapshot.power);
@@ -1205,7 +1275,7 @@ static esp_err_t send_state_json(httpd_req_t *req)
     }
 
     char color_hex[8];
-    std::snprintf(color_hex, sizeof(color_hex), "#%02X%02X%02X", snapshot.red, snapshot.green, snapshot.blue);
+    format_hex_color(snapshot.red, snapshot.green, snapshot.blue, color_hex, sizeof(color_hex));
 
     cJSON_AddNumberToObject(root, "count", snapshot.count);
     cJSON_AddNumberToObject(root, "brightness", snapshot.brightness);
@@ -1217,6 +1287,13 @@ static esp_err_t send_state_json(httpd_req_t *req)
         for (size_t index = 0; index < kEffectParamSlotCount; ++index) {
             cJSON_AddItemToArray(profile, cJSON_CreateNumber(snapshot.effect_profiles[effect].values[index]));
         }
+    }
+    cJSON *effect_colors = cJSON_AddObjectToObject(root, "effect_colors");
+    for (uint8_t effect = 0; effect < LED_EFFECT_COUNT; ++effect) {
+        char effect_color_hex[8];
+        format_hex_color(snapshot.effect_colors[effect].red, snapshot.effect_colors[effect].green,
+                         snapshot.effect_colors[effect].blue, effect_color_hex, sizeof(effect_color_hex));
+        cJSON_AddStringToObject(effect_colors, effect_to_name(effect), effect_color_hex);
     }
     cJSON_AddBoolToObject(root, "power", snapshot.power);
     cJSON_AddNumberToObject(root, "max_leds", APP_LED_MAX_PIXELS);
@@ -1281,6 +1358,32 @@ static esp_err_t state_get_handler(httpd_req_t *req)
     return send_state_json(req);
 }
 
+static char *read_request_body(httpd_req_t *req)
+{
+    if (!req || req->content_len <= 0 || req->content_len >= APP_POST_BODY_LIMIT) {
+        return nullptr;
+    }
+
+    char *body = static_cast<char *>(malloc(req->content_len + 1));
+    if (!body) {
+        return nullptr;
+    }
+
+    int remaining = req->content_len;
+    int offset = 0;
+    while (remaining > 0) {
+        int received = httpd_req_recv(req, body + offset, remaining);
+        if (received <= 0) {
+            free(body);
+            return nullptr;
+        }
+        offset += received;
+        remaining -= received;
+    }
+    body[offset] = '\0';
+    return body;
+}
+
 static esp_err_t control_post_handler(httpd_req_t *req)
 {
     if (req->content_len <= 0 || req->content_len >= APP_POST_BODY_LIMIT) {
@@ -1288,21 +1391,13 @@ static esp_err_t control_post_handler(httpd_req_t *req)
         return httpd_resp_sendstr(req, "Invalid request body");
     }
 
-    char body[APP_POST_BODY_LIMIT];
-    int remaining = req->content_len;
-    int offset = 0;
-    while (remaining > 0) {
-        int received = httpd_req_recv(req, body + offset, remaining);
-        if (received <= 0) {
-            httpd_resp_set_status(req, "400 Bad Request");
-            return httpd_resp_sendstr(req, "Failed to read request body");
-        }
-        offset += received;
-        remaining -= received;
+    char *body = read_request_body(req);
+    if (!body) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "Failed to read request body");
     }
-    body[offset] = '\0';
-
     cJSON *root = cJSON_Parse(body);
+    free(body);
     if (!root) {
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_sendstr(req, "Invalid JSON");
@@ -1318,10 +1413,12 @@ static esp_err_t control_post_handler(httpd_req_t *req)
     cJSON *color = cJSON_GetObjectItemCaseSensitive(root, "color");
     cJSON *effect = cJSON_GetObjectItemCaseSensitive(root, "effect");
     cJSON *effect_params = cJSON_GetObjectItemCaseSensitive(root, "effect_params");
+    cJSON *effect_color = cJSON_GetObjectItemCaseSensitive(root, "effect_color");
     cJSON *power = cJSON_GetObjectItemCaseSensitive(root, "power");
 
     if ((count && !cJSON_IsNumber(count)) || !cJSON_IsNumber(brightness) || !cJSON_IsString(color) ||
         !cJSON_IsString(effect) || !cJSON_IsArray(effect_params) ||
+        !(cJSON_IsString(effect_color) || effect_color == nullptr) ||
         !(cJSON_IsBool(power) || power == nullptr)) {
         cJSON_Delete(root);
         httpd_resp_set_status(req, "400 Bad Request");
@@ -1344,9 +1441,18 @@ static esp_err_t control_post_handler(httpd_req_t *req)
             updated.effect_profiles[updated.effect].values[index] = clamp_u8(static_cast<int>(item->valuedouble));
         }
     }
+    if (effect_color &&
+        !parse_hex_color(effect_color->valuestring, &updated.effect_colors[updated.effect].red,
+                         &updated.effect_colors[updated.effect].green, &updated.effect_colors[updated.effect].blue)) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "Invalid effect color");
+    }
     clamp_effect_profile(updated.effect, &updated.effect_profiles[updated.effect]);
     if (power) {
         updated.power = cJSON_IsTrue(power);
+    } else {
+        updated.power = updated.brightness > 0;
     }
     clamp_state(&updated);
     cJSON_Delete(root);
@@ -1378,21 +1484,13 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         return httpd_resp_sendstr(req, "Invalid request body");
     }
 
-    char body[APP_POST_BODY_LIMIT];
-    int remaining = req->content_len;
-    int offset = 0;
-    while (remaining > 0) {
-        int received = httpd_req_recv(req, body + offset, remaining);
-        if (received <= 0) {
-            httpd_resp_set_status(req, "400 Bad Request");
-            return httpd_resp_sendstr(req, "Failed to read request body");
-        }
-        offset += received;
-        remaining -= received;
+    char *body = read_request_body(req);
+    if (!body) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "Failed to read request body");
     }
-    body[offset] = '\0';
-
     cJSON *root = cJSON_Parse(body);
+    free(body);
     if (!root) {
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_sendstr(req, "Invalid JSON");
@@ -1679,6 +1777,7 @@ static void start_webserver()
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 24;
+    config.stack_size = 8192;
     config.recv_wait_timeout = 30;
     config.send_wait_timeout = 30;
 
@@ -2231,6 +2330,7 @@ extern "C" void app_main()
     assert(s_ota_mutex != nullptr);
 
     reset_effect_profiles_to_defaults(&s_led_state);
+    reset_effect_colors_to_defaults(&s_led_state);
     load_state_from_nvs();
     apply_startup_power_policy();
     init_led_strip();
