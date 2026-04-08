@@ -7,6 +7,7 @@ It exposes the strip in two ways:
 - A local web page for LED count, color, brightness, effects, OTA, and reset actions
 - A Matter extended color light endpoint for Apple Home
 - A local OTA firmware upload flow from the same web page
+- Automatic update checks against the latest published GitHub release
 - A firmware revert action that boots back into the other OTA slot
 - A factory reset action that clears Matter pairing, Wi-Fi AP config, and saved LED settings
 - Built-in LED effects: `glow`, `rainbow`, `chase`, `sparkle`, `wave`
@@ -50,7 +51,7 @@ The first install still needs USB flashing. After that, you can upload new firmw
 The device page is split into three tabs:
 
 - `Overview`: Matter state, AP and LAN web UI URLs, firmware version, running slot, revert target
-- `Configuration`: LED count, SoftAP SSID/password, OTA upload, revert button, factory reset, reboot
+- `Configuration`: LED count, SoftAP SSID/password, auto-update toggle, OTA upload, published update check, revert button, factory reset, reboot
 - `Control`: brightness, color, and one sub-tab per effect with its own parameters
 
 The SoftAP credentials shown in `Configuration` are the credentials hosted by the ESP32-C6 itself for the local setup page. On a fresh device they are generated automatically and printed to the serial log when the AP starts.
@@ -77,6 +78,22 @@ The local web page also shows the current Matter state, manual setup code, QR UR
 After at least one successful OTA update, the `Revert To Previous Firmware` button in `Configuration` can boot the device back into the other application slot.
 
 This OTA path updates the application partition only. Bootloader and partition table changes still require USB flashing.
+
+## Published auto-updates
+
+The firmware can watch the latest GitHub release for this repository and install a newer published build automatically once the device has normal Wi-Fi access.
+
+To use it:
+
+1. Flash or OTA-install firmware `1.3` or newer once.
+2. Leave `Auto Update From Published Release` enabled in the `Configuration` tab.
+3. Push the latest code to `main`.
+4. Publish a GitHub release with a version tag higher than the device firmware version, such as `v1.4`.
+5. Wait for the `Publish Firmware` GitHub Actions workflow to finish building and attach `esp32c6_led_web.bin` to that release.
+
+The device checks periodically after it has a station IP, and you can also trigger an immediate check from the web UI with `Check Published Update Now`.
+
+The release workflow is pinned to the `esp-matter` revision that this project currently builds with. If you intentionally upgrade the Matter stack later, update `ESP_MATTER_REF` in `.github/workflows/publish-firmware.yml` too so GitHub release builds match local builds.
 
 ## Reset options
 

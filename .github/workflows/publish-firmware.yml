@@ -1,0 +1,87 @@
+name: Publish Firmware
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+env:
+  IDF_VERSION: v5.4.1
+  ESP_MATTER_REF: c6f767254f6267e057916981646a44c65d034254
+  FIRMWARE_ASSET_NAME: esp32c6_led_web.bin
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install ESP-IDF
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$IDF_VERSION" --recursive https://github.com/espressif/esp-idf.git "$HOME/esp-idf"
+          cd "$HOME/esp-idf"
+          ./install.sh esp32c6
+
+      - name: Check out esp-matter
+        shell: bash
+        run: |
+          git clone --recursive https://github.com/espressif/esp-matter.git "$HOME/esp-matter"
+          git -C "$HOME/esp-matter" checkout "$ESP_MATTER_REF"
+          git -C "$HOME/esp-matter" submodule update --init --recursive
+
+      - name: Install esp-matter dependencies
+        shell: bash
+        run: |
+          export IDF_PATH="$HOME/esp-idf"
+          source "$IDF_PATH/export.sh" >/dev/null
+          cd "$HOME/esp-matter"
+          ./install.sh --no-host-tool
+
+      - name: Export build environment
+        shell: bash
+        run: |
+          CHIP_ROOT="$HOME/esp-matter/connectedhomeip/connectedhomeip"
+          {
+            echo "IDF_PATH=$HOME/esp-idf"
+            echo "ESP_MATTER_PATH=$HOME/esp-matter"
+            echo "CHIP_ROOT=$CHIP_ROOT"
+            echo "PW_PROJECT_ROOT=$CHIP_ROOT"
+            echo "PW_ROOT=$CHIP_ROOT/third_party/pigweed/repo"
+          } >> "$GITHUB_ENV"
+          echo "$CHIP_ROOT/.environment/cipd/packages/pigweed" >> "$GITHUB_PATH"
+
+      - name: Build firmware
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh" >/dev/null
+          cd "$GITHUB_WORKSPACE"
+          idf.py set-target esp32c6 build
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32c6-led-web-firmware
+          path: |
+            build/esp32c6_led_web.bin
+            build/project_description.json
+          if-no-files-found: error
+
+      - name: Attach firmware to published release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" "build/$FIRMWARE_ASSET_NAME" --clobber
