@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -34,8 +35,8 @@
 #include <platform/PlatformManager.h>
 #include <setup_payload/OnboardingCodesUtil.h>
 
-#define APP_WIFI_SSID            "ESP32C6-LED-Setup"
-#define APP_WIFI_PASS            "esp32c6led"
+#define APP_WIFI_SSID_PREFIX     "ESP32C6-LED-"
+#define APP_WIFI_PASS_PREFIX     "LedSetup-"
 #define APP_WIFI_CHANNEL         6
 #define APP_WIFI_MAX_STA_CONN    4
 
@@ -142,10 +143,10 @@ static bool s_syncing_matter = false;
 static bool s_network_handlers_registered = false;
 static char s_ap_ip[16] = "192.168.4.1";
 static char s_sta_ip[16] = "";
-static char s_ap_ssid[33] = APP_WIFI_SSID;
-static char s_ap_password[65] = APP_WIFI_PASS;
-static char s_runtime_ap_ssid[33] = APP_WIFI_SSID;
-static char s_runtime_ap_password[65] = APP_WIFI_PASS;
+static char s_ap_ssid[33] = "";
+static char s_ap_password[65] = "";
+static char s_runtime_ap_ssid[33] = "";
+static char s_runtime_ap_password[65] = "";
 static char s_matter_qr_code[APP_QR_CODE_MAX] = "";
 static char s_matter_manual_code[APP_MANUAL_CODE_MAX] = "";
 static char s_matter_qr_url[APP_QR_URL_MAX] = "";
@@ -501,6 +502,21 @@ static void copy_string_value(char *dest, size_t dest_size, const char *src)
     size_t copy_len = std::min(dest_size - 1, std::strlen(src));
     std::memcpy(dest, src, copy_len);
     dest[copy_len] = '\0';
+}
+
+static void set_generated_ap_credentials()
+{
+    uint8_t mac[6] = {};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP) != ESP_OK) {
+        uint32_t fallback = esp_random();
+        std::snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%s%06" PRIX32, APP_WIFI_SSID_PREFIX, fallback & 0xFFFFFFU);
+        std::snprintf(s_ap_password, sizeof(s_ap_password), "%s%08" PRIX32, APP_WIFI_PASS_PREFIX, esp_random());
+        return;
+    }
+
+    std::snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%s%02X%02X%02X", APP_WIFI_SSID_PREFIX, mac[3], mac[4], mac[5]);
+    std::snprintf(s_ap_password, sizeof(s_ap_password), "%s%02X%02X%02X%08" PRIX32, APP_WIFI_PASS_PREFIX, mac[1],
+                  mac[4], mac[5], esp_random());
 }
 
 static bool matter_is_ready()
@@ -978,14 +994,14 @@ cleanup:
     return ret;
 }
 
-static void load_state_from_nvs()
+static bool load_state_from_nvs()
 {
     nvs_handle_t nvs_handle = 0;
     char key[16];
     if (nvs_open(APP_NVS_NAMESPACE, NVS_READONLY, &nvs_handle) != ESP_OK) {
         clamp_state(&s_led_state);
         refresh_matter_hs_trackers_from_rgb(s_led_state.red, s_led_state.green, s_led_state.blue);
-        return;
+        return false;
     }
 
     uint16_t count = s_led_state.count;
@@ -1030,6 +1046,7 @@ static void load_state_from_nvs()
     s_led_state.effect = effect;
     clamp_state(&s_led_state);
     refresh_matter_hs_trackers_from_rgb(s_led_state.red, s_led_state.green, s_led_state.blue);
+    return true;
 }
 
 static void apply_startup_power_policy()
@@ -2331,9 +2348,14 @@ extern "C" void app_main()
 
     reset_effect_profiles_to_defaults(&s_led_state);
     reset_effect_colors_to_defaults(&s_led_state);
-    load_state_from_nvs();
+    set_generated_ap_credentials();
+    bool loaded_state_from_nvs = load_state_from_nvs();
     apply_startup_power_policy();
     init_led_strip();
+
+    if (!loaded_state_from_nvs) {
+        ESP_ERROR_CHECK(save_state_to_nvs(&s_led_state));
+    }
 
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
     ESP_ERROR_CHECK(apply_led_state_locked(&s_led_state));

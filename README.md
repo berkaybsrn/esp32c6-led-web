@@ -16,8 +16,7 @@ The firmware starts a Wi-Fi SoftAP, serves the control page directly from the bo
 
 ## Defaults
 
-- Wi-Fi SSID: `ESP32C6-LED-Setup`
-- Wi-Fi password: `esp32c6led`
+- SoftAP SSID/password: generated per device on first boot and stored in NVS
 - Web UI: `http://192.168.4.1`
 - LED data GPIO: `17` (`D7` on XIAO ESP32C6)
 - Maximum strip length compiled in: `120`
@@ -54,7 +53,7 @@ The device page is split into three tabs:
 - `Configuration`: LED count, SoftAP SSID/password, OTA upload, revert button, factory reset, reboot
 - `Control`: brightness, color, and one sub-tab per effect with its own parameters
 
-The SoftAP credentials shown in `Configuration` are the credentials hosted by the ESP32-C6 itself for the local setup page.
+The SoftAP credentials shown in `Configuration` are the credentials hosted by the ESP32-C6 itself for the local setup page. On a fresh device they are generated automatically and printed to the serial log when the AP starts.
 
 ## Pair with Apple Home
 
